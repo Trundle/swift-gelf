@@ -41,15 +41,76 @@ public struct LogEvent {
 // XXX documentation
 public protocol LogAppender {
     func append(_ event: LogEvent)
+    func start() throws
+    func stop() throws
 }
 
-// XXX documentation
-public class Logger {
+// Default implementations for some of the LogAppender methods
+extension LogAppender {
+    public func start() throws {
+        // Do nothing
+    }
+
+    public func stop() throws {
+        // Do nothing
+    }
+}
+
+/// A convenient base class for implementors of `LogAppender`.
+public class LogAppenderBase {
+
+    var filters: [EventFilter] = []
+
+    public func addFilter(_ filter: EventFilter) {
+        filters.append(filter)
+    }
+
+    /// Called after checking against an event against all filters.
+    /// Should do the actual appending.
+    func doAppend(_ event: LogEvent) {
+    }
+}
+
+extension LogAppenderBase: LogAppender {
+    public func append(_ event: LogEvent) {
+        if filters.allSatisfy({ $0.shouldBeKept(event) }) {
+            doAppend(event)
+        }
+    }
+}
+
+// MARK: Filters
+
+public protocol EventFilter {
+    func shouldBeKept(_ event: LogEvent) -> Bool
+}
+
+/// Filters log events based on their level
+public final class ThresholdFilter {
+    private let thresholdLevel: LogLevel
+
+    public init(thresholdLevel: LogLevel) {
+        self.thresholdLevel = thresholdLevel
+    }
+}
+
+extension ThresholdFilter: EventFilter {
+    public func shouldBeKept(_ event: LogEvent) -> Bool {
+        return event.level.rawValue <= thresholdLevel.rawValue
+    }
+}
+
+/// An object that allows adding events ("log messages") to the logging
+/// system. Typically the main touch point for application code to the
+/// logging system.
+/// Every event can be enriched with arbitrary key-value pairs that will
+/// be reported together with the event (also known as structured logging).
+public final class Logger: LogAppenderBase {
 
     private var appenders: [LogAppender] = []
 
-    init() {
-        self.appenders = [PrintAppender()]
+    init(appenders: [LogAppender]) {
+        self.appenders = appenders
     }
 
     init(parent: Logger) {
@@ -59,9 +120,15 @@ public class Logger {
     public func addAppender(_ appender: LogAppender) {
         appenders.append(appender)
     }
+
+    override func doAppend(_ event: LogEvent) {
+        for appender in appenders {
+            appender.append(event)
+        }
+    }
 }
 
-/// MARK: Logging functions
+// MARK: Logging functions
 extension Logger {
     public func info(_ msg: String, _ fields: [String: Any] = [:]) {
         log(level: .Info, msg: msg, fields: fields)
@@ -77,17 +144,26 @@ extension Logger {
     }
 }
 
-extension Logger: LogAppender {
-    public func append(_ event: LogEvent) {
-        for appender in appenders {
-            appender.append(event)
+// MARK: Helpers
+
+#if !swift(>=4.2)
+extension Sequence {
+    func allSatisfy(_ predicate: (Element) -> Bool) -> Bool {
+        for element in self {
+            guard predicate(element) else {
+                return false
+            }
         }
+        return true
     }
 }
+#endif
 
+
+// MARK: Obtaining loggers
 
 // The root logger
-let rootLogger = Logger()
+let rootLogger = Logger(appenders: [PrintAppender()])
 
 public func getLogger() -> Logger {
     return Logger(parent: rootLogger)
