@@ -43,6 +43,14 @@ extension GelfValue {
     }
 }
 
+extension GelfValue: ExpressibleByIntegerLiteral {
+    typealias IntegerLiteralType = Int
+
+    init(integerLiteral value: IntegerLiteralType) {
+        self = .number(Double(value))
+    }
+}
+
 extension GelfValue: ExpressibleByFloatLiteral {
     init(floatLiteral value: Float) {
         self = .number(Double(value))
@@ -101,10 +109,16 @@ final class GelfEncoder: MessageToByteEncoder {
     private let encoder: JSONEncoder = JSONEncoder()
     private let host: String
     private let facility: String
+    private let additionalFields: [String: GelfValue]
 
-    init(host: String, facility: String) {
+    init(host: String, facility: String, additionalFields: [String: Any] = [:]) {
         self.host = host
         self.facility = facility
+        var gelfAdditionalFields: [String: GelfValue] = [:]
+        for (name, value) in additionalFields {
+            gelfAdditionalFields["_" + name] = GelfEncoder.toGelfValue(value)
+        }
+        self.additionalFields = gelfAdditionalFields
     }
 
     func encode(ctx: ChannelHandlerContext, data: OutboundIn, out: inout ByteBuffer) throws {
@@ -117,30 +131,31 @@ final class GelfEncoder: MessageToByteEncoder {
         var gelfMsg: [String: GelfValue] = [
             "version": "1.1",
             "host": GelfValue(self.host),
-            "facility": GelfValue(self.facility),
             "timestamp": GelfValue(event.timestamp.timeIntervalSince1970),
             "level": GelfValue(event.level.rawValue),
             "short_message": GelfValue(event.shortMessage),
+            "_facility": GelfValue(self.facility),
         ]
         for (name, value) in event.fields {
-            var gelfValue: GelfValue
-            switch value {
-            case let string as String:
-                gelfValue = GelfValue(string)
-            case let number as Double:
-                gelfValue = GelfValue(number)
-            case let number as Float:
-                gelfValue = GelfValue(number)
-            case let number as Int:
-                gelfValue = GelfValue(number)
-            case let debugConvertible as CustomDebugStringConvertible:
-                gelfValue = GelfValue(debugConvertible.debugDescription)
-            default:
-                gelfValue = GelfValue(Mirror(reflecting: value).description)
-            }
-            gelfMsg["_" + name] = gelfValue
+            gelfMsg["_" + name] = GelfEncoder.toGelfValue(value)
         }
+        gelfMsg.merge(additionalFields, uniquingKeysWith: { (a, b) in b })
         return gelfMsg
+    }
+
+    private static func toGelfValue(_ value: Any) -> GelfValue {
+        switch value {
+        case let string as String:
+            return GelfValue(string)
+        case let number as Double:
+            return GelfValue(number)
+        case let number as Float:
+            return GelfValue(number)
+        case let number as Int:
+            return GelfValue(number)
+        default:
+            return GelfValue(String(describing: value))
+        }
     }
 }
 
@@ -172,11 +187,13 @@ public final class GelfAppender {
     private let senderHost: String
     private let host: String
     private let port: Int
+    private let additionalFields: [String: Any]
     private let reconnectDelay: TimeAmount
     private let maxBufferSize: Int
     private let group: EventLoopGroup
     private var loop: EventLoop!
     private var bootstrap: ClientBootstrap!
+    // Invariant: present value means there is an active connection to the GELF server
     private var channel: Channel?
     private var started: Bool = false
     private var inFlight: Atomic<Int> = Atomic(value: 0)
@@ -184,6 +201,7 @@ public final class GelfAppender {
 
     public init(group: EventLoopGroup, senderHost: String, facility: String,
                 host: String, port: Int = 12201,
+                additionalFields: [String: Any] = [:],
                 reconnectDelay: TimeAmount = TimeAmount.seconds(1),
                 maxBufferSize: Int = 1000,
                 maxInFlight: Int = 1000) {
@@ -192,6 +210,7 @@ public final class GelfAppender {
         self.group = group
         self.host = host
         self.port = port
+        self.additionalFields = additionalFields
         self.reconnectDelay = reconnectDelay
         self.maxBufferSize = maxBufferSize
         self.maxInFlight = maxInFlight
@@ -201,7 +220,9 @@ public final class GelfAppender {
         bootstrap = ClientBootstrap(group: group)
                 .channelInitializer { channel in
                     channel.pipeline.add(handler: GelfMessageDelimiter()).then {
-                        channel.pipeline.add(handler: GelfEncoder(host: self.senderHost, facility: self.facility))
+                        channel.pipeline.add(handler: GelfEncoder(
+                                host: self.senderHost, facility: self.facility,
+                                additionalFields: self.additionalFields))
                     }.then {
                         channel.pipeline.add(handler: ReconnectInitiator(disconnectCallback: self.initiateReconnect))
                     }
