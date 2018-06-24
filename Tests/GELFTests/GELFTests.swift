@@ -15,7 +15,7 @@ final class GELFTests: XCTestCase {
         _ = try channel.writeAndFlush(msg).wait()
 
         if case .some(.byteBuffer(var buffer)) = channel.readOutbound() {
-            guard let json = buffer.readData(length: buffer.readableBytes - 1) else {
+            guard let json = buffer.readData(length: buffer.readableBytes) else {
                 XCTFail("Could not read expected JSON")
                 return
             }
@@ -28,9 +28,6 @@ final class GELFTests: XCTestCase {
             XCTAssertEqual(GelfValue(42), decoded["_number"])
             // Optionals get unpacked
             XCTAssertEqual(GelfValue(42), decoded["_optional"])
-
-            let byte = buffer.readBytes(length: 1)
-            XCTAssertEqual([UInt8(0)], byte)
         } else {
             XCTFail("couldn't read ByteBuffer from channel")
         }

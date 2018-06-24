@@ -14,6 +14,8 @@
 
 /// The GELF-independent parts of the logging API
 
+import Foundation
+
 public enum LogLevel: Int {
     case Debug = 7
     case Info = 6
@@ -23,8 +25,70 @@ public enum LogLevel: Int {
 }
 
 public struct LogEvent {
-    let timestamp: Double
+    let timestamp: Date
     let level: LogLevel
     let shortMessage: String
     let fields: [String: Any]
+
+    public init(timestamp: Date, level: LogLevel, shortMessage: String, fields: [String: Any]) {
+        self.timestamp = timestamp
+        self.level = level
+        self.shortMessage = shortMessage
+        self.fields = fields
+    }
+}
+
+// XXX documentation
+public protocol LogAppender {
+    func append(_ event: LogEvent)
+}
+
+// XXX documentation
+public class Logger {
+
+    private var appenders: [LogAppender] = []
+
+    init() {
+        self.appenders = [PrintAppender()]
+    }
+
+    init(parent: Logger) {
+        self.appenders = [parent]
+    }
+
+    public func addAppender(_ appender: LogAppender) {
+        appenders.append(appender)
+    }
+}
+
+/// MARK: Logging functions
+extension Logger {
+    public func info(_ msg: String, _ fields: [String: Any] = [:]) {
+        log(level: .Info, msg: msg, fields: fields)
+    }
+
+    public func log(level: LogLevel, msg: String, fields: [String: Any]) {
+        let event = LogEvent(
+                timestamp: Date(),
+                level: level,
+                shortMessage: msg,
+                fields: fields)
+        append(event)
+    }
+}
+
+extension Logger: LogAppender {
+    public func append(_ event: LogEvent) {
+        for appender in appenders {
+            appender.append(event)
+        }
+    }
+}
+
+
+// The root logger
+let rootLogger = Logger()
+
+public func getLogger() -> Logger {
+    return Logger(parent: rootLogger)
 }

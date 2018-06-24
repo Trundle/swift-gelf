@@ -14,6 +14,7 @@
 
 import Foundation
 import NIO
+import NIOConcurrencyHelpers
 
 // MARK: GelfValue - a value in a GELF messages
 // Work around Codabale's ability to operate with generic JSON values
@@ -82,22 +83,42 @@ extension GelfValue: Codable {
 
 // MARK: Encoder
 
+/// Writes the message delimiter (a null byte).
+final class GelfMessageDelimiter: ChannelOutboundHandler {
+    typealias OutboundIn = ByteBuffer
+    typealias OutboundOut = ByteBuffer
+
+    func write(ctx: ChannelHandlerContext, data: NIOAny, promise: EventLoopPromise<Void>?) {
+        var buf = self.unwrapOutboundIn(data)
+        buf.write(staticString: "\0")
+        ctx.write(self.wrapOutboundOut(buf), promise: promise)
+    }
+}
+
 final class GelfEncoder: MessageToByteEncoder {
     typealias OutboundIn = LogEvent
 
     private let encoder: JSONEncoder = JSONEncoder()
+    private let host: String
+    private let facility: String
+
+    init(host: String, facility: String) {
+        self.host = host
+        self.facility = facility
+    }
 
     func encode(ctx: ChannelHandlerContext, data: OutboundIn, out: inout ByteBuffer) throws {
         let gelfMessage = toGelfMessage(data)
         let encoded = try encoder.encode(gelfMessage)
         out.write(bytes: encoded)
-        out.write(staticString: "\0")
     }
 
     private func toGelfMessage(_ event: LogEvent) -> [String: GelfValue] {
         var gelfMsg: [String: GelfValue] = [
             "version": "1.1",
-            "timestamp": GelfValue(event.timestamp),
+            "host": GelfValue(self.host),
+            "facility": GelfValue(self.facility),
+            "timestamp": GelfValue(event.timestamp.timeIntervalSince1970),
             "level": GelfValue(event.level.rawValue),
             "short_message": GelfValue(event.shortMessage),
         ]
@@ -123,31 +144,128 @@ final class GelfEncoder: MessageToByteEncoder {
     }
 }
 
+// MARK: Transport helpers
+
+private class ReconnectInitiator: ChannelInboundHandler {
+    typealias InboundIn = ByteBuffer
+
+    let disconnectCallback: () -> Void
+
+    init(disconnectCallback: @escaping () -> Void) {
+        self.disconnectCallback = disconnectCallback
+    }
+
+    func channelInactive(ctx: ChannelHandlerContext) {
+        // XXX replace by logger call
+        print("[INFO] GelfAppender: Connection lost")
+        disconnectCallback()
+    }
+}
+
 // MARK: GelfAppender
 
 /// Appends messages to a GELF server
 public final class GelfAppender {
-
-    private let bootstrap: ClientBootstrap
+    // Buffer where log events are stored in case the appender is not connected
+    private var buffer: CircularBuffer<LogEvent> = CircularBuffer(initialRingCapacity: 100)
+    private let facility: String
+    private let senderHost: String
     private let host: String
     private let port: Int
+    private let reconnectDelay: TimeAmount
+    private let maxBufferSize: Int
+    private let group: EventLoopGroup
+    private var loop: EventLoop!
+    private var bootstrap: ClientBootstrap!
     private var channel: Channel?
+    private var started: Bool = false
+    private var inFlight: Atomic<Int> = Atomic(value: 0)
+    private let maxInFlight: Int
 
-    init(group: EventLoopGroup, host: String, port: Int = 12201) {
+    public init(group: EventLoopGroup, senderHost: String, facility: String,
+                host: String, port: Int = 12201,
+                reconnectDelay: TimeAmount = TimeAmount.seconds(1),
+                maxBufferSize: Int = 1000,
+                maxInFlight: Int = 1000) {
+        self.senderHost = senderHost
+        self.facility = facility
+        self.group = group
         self.host = host
         self.port = port
-        self.bootstrap = ClientBootstrap(group: group)
-        .channelInitializer { channel in
-            channel.pipeline.add(handler: GelfEncoder())
-        }
+        self.reconnectDelay = reconnectDelay
+        self.maxBufferSize = maxBufferSize
+        self.maxInFlight = maxInFlight
     }
 
     public func start() throws {
+        bootstrap = ClientBootstrap(group: group)
+                .channelInitializer { channel in
+                    channel.pipeline.add(handler: GelfMessageDelimiter()).then {
+                        channel.pipeline.add(handler: GelfEncoder(host: self.senderHost, facility: self.facility))
+                    }.then {
+                        channel.pipeline.add(handler: ReconnectInitiator(disconnectCallback: self.initiateReconnect))
+                    }
+                }
         channel = try bootstrap.connect(host: host, port: port).wait()
+        loop = channel!.eventLoop
+        started = true
     }
 
     public func stop() throws {
-        try channel?.close().wait()
+        if let channel = self.channel {
+            self.channel = .none
+            try channel.close().wait()
+        }
+        started = false
+    }
+
+    private func initiateReconnect() {
+        guard started else {
+            return
+        }
         channel = .none
+        _ = loop.scheduleTask(in: reconnectDelay) {
+            let future = self.bootstrap.connect(host: self.host, port: self.port)
+            future.whenSuccess { channel in
+                self.channel = .some(channel)
+                self.sendBufferedEvents()
+            }
+            future.whenFailure { error in
+                // XXX use logger instead
+                print("[WARN] GelfAppender: Could not reconnect: \(error)")
+                self.initiateReconnect()
+            }
+        }
+    }
+
+    private func sendBufferedEvents() {
+        assert(loop.inEventLoop)
+        while case .some(_) = channel, !buffer.isEmpty {
+            append(buffer.removeFirst())
+        }
+    }
+}
+
+extension GelfAppender: LogAppender {
+    public func append(_ event: LogEvent) {
+        if let channel = self.channel {
+            guard inFlight.add(1) < self.maxInFlight else {
+                _ = inFlight.sub(1)
+                print("[WARN] GelfAppender: Too many messages in flight, dropping", event)
+                return
+            }
+            let future = channel.writeAndFlush(event)
+            future.whenFailure { _ in self.append(event) }
+            future.whenComplete { _ = self.inFlight.sub(1) }
+        } else {
+            // We are disconnected currently
+            loop.execute {
+                guard self.buffer.count < self.maxBufferSize else {
+                    print("[WARN] GelfAppender: Log buffer over capacity while disconnected, dropping", event)
+                    return
+                }
+                self.buffer.append(event)
+            }
+        }
     }
 }

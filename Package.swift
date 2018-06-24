@@ -20,5 +20,9 @@ let package = Package(
         .testTarget(
             name: "GELFTests",
             dependencies: ["GELF", "NIOFoundationCompat"]),
+        // A small executable to demonstrate how to use the library
+        .target(
+            name: "Sample",
+            dependencies: ["GELF"]),
     ]
 )
