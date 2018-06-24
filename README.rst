@@ -1,3 +1,9 @@
+.. image:: https://img.shields.io/github/license/Trundle/swift-gelf.svg
+   :target: https://tldrlegal.com/l/apache2
+
+.. image:: https://travis-ci.org/Trundle/swift-gelf.svg?branch=master
+   :target: https://travis-ci.org/Trundle/swift-gelf
+
 ==========
 swift-gelf
 ==========
