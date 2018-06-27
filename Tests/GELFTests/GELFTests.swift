@@ -54,7 +54,7 @@ final class GELFTests: XCTestCase {
     private func createLogEvent() -> LogEvent {
         return LogEvent(
                 timestamp: Date(timeIntervalSince1970: 1234567.89),
-                level: .Info,
+                level: .info,
                 shortMessage: "The log message",
                 fields: [
                     "string": "string value",

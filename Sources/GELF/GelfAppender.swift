@@ -139,7 +139,7 @@ final class GelfEncoder: MessageToByteEncoder {
         for (name, value) in event.fields {
             gelfMsg["_" + name] = GelfEncoder.toGelfValue(value)
         }
-        gelfMsg.merge(additionalFields, uniquingKeysWith: { (a, b) in b })
+        gelfMsg.merge(additionalFields, uniquingKeysWith: { (_, new) in new })
         return gelfMsg
     }
 

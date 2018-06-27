@@ -4,15 +4,15 @@ import XCTest
 
 final class ThresholdFilterTests: XCTestCase {
 
-    private let filter: ThresholdFilter = ThresholdFilter(thresholdLevel: .Info)
+    private let filter: ThresholdFilter = ThresholdFilter(thresholdLevel: .info)
 
     func testFiltersLowerLogLevel() {
-        let event = createLogEvent(level: .Debug)
+        let event = createLogEvent(level: .debug)
         XCTAssertFalse(filter.shouldBeKept(event))
     }
 
     func testPassesLogLevel() {
-        let event = createLogEvent(level: .Info)
+        let event = createLogEvent(level: .info)
         XCTAssertTrue(filter.shouldBeKept(event))
     }
 
@@ -33,7 +33,7 @@ final class LoggerTests: XCTestCase {
 
         func append(_ event: LogEvent) {
             timesCalled += 1
-            XCTAssertEqual(LogLevel.Info, event.level)
+            XCTAssertEqual(LogLevel.info, event.level)
             XCTAssertEqual("some message", event.shortMessage)
         }
     }

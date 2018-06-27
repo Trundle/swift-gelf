@@ -26,23 +26,24 @@ class PrintAppender {
 extension PrintAppender: LogAppender {
 
     func append(_ event: LogEvent) {
-        let level = PrintAppender.levelRepresentation(event.level)
         let when = dateFormatter.string(from: event.timestamp)
         let fields = event.fields.map { (key, value) in "\(key)=\(value)" }.joined(separator: " ")
-        print("\(when) \(level) \(event.shortMessage) \(fields)")
+        print("\(when) \(event.level) \(event.shortMessage) \(fields)")
     }
+}
 
-    private static func levelRepresentation(_ level: LogLevel) -> String {
-        switch level {
-        case .Debug:
+extension LogLevel: CustomStringConvertible {
+    public var description: String {
+        switch self {
+        case .debug:
             return "[DEBUG]"
-        case .Info:
+        case .info:
             return "[INFO]"
-        case .Warn:
+        case .warn:
             return "[WARN]"
-        case .Error:
+        case .error:
             return "[ERR]"
-        case .Fatal:
+        case .fatal:
             return "[FATAL]"
         }
     }
