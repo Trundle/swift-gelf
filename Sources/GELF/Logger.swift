@@ -130,7 +130,7 @@ public final class Logger: LogAppenderBase {
 
 // MARK: Logging functions
 extension Logger {
-    func debug(_ msg: String, _ fields: [String: Any] = [:]) {
+    public func debug(_ msg: String, _ fields: [String: Any] = [:]) {
         log(level: .debug, msg: msg, fields: fields)
     }
 
@@ -138,15 +138,15 @@ extension Logger {
         log(level: .info, msg: msg, fields: fields)
     }
 
-    func warn(_ msg: String, _ fields: [String: Any] = [:]) {
+    public func warn(_ msg: String, _ fields: [String: Any] = [:]) {
         log(level: .warn, msg: msg, fields: fields)
     }
 
-    func error(_ msg: String, _ fields: [String: Any] = [:]) {
+    public func error(_ msg: String, _ fields: [String: Any] = [:]) {
         log(level: .error, msg: msg, fields: fields)
     }
 
-    func fatal(_ msg: String, _ fields: [String: Any] = [:]) {
+    public func fatal(_ msg: String, _ fields: [String: Any] = [:]) {
         log(level: .fatal, msg: msg, fields: fields)
     }
 
