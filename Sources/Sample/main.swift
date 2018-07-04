@@ -8,9 +8,12 @@ let appender = GelfAppender(group: group,
         host: "192.168.178.32")
 try appender.start()
 
+configureLogging(pipeline: Pipeline(stage: ThresholdFilter(thresholdLevel: .info))
+        .append(stage: appender)
+        .append(stage: PrintAppender()))
+
 let logger = getLogger()
 logger.info("Hello, world!")
-logger.addAppender(appender)
 
 for i in 1...100000 {
     logger.info("A first message: " + String(i), ["n": i])

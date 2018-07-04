@@ -15,20 +15,20 @@
 import Foundation
 
 /// A log appender that writes to stdout
-class PrintAppender {
+public class PrintAppender {
     let dateFormatter: DateFormatter = DateFormatter()
 
-    init() {
+    public init() {
         dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZZZZZ"
     }
 }
 
-extension PrintAppender: LogAppender {
-
-    func append(_ event: LogEvent) {
+extension PrintAppender: Stage {
+    public func process(_ event: LogEvent) -> LogEvent? {
         let when = dateFormatter.string(from: event.timestamp)
         let fields = event.fields.map { (key, value) in "\(key)=\(value)" }.joined(separator: " ")
         print("\(when) \(event.level) \(event.shortMessage) \(fields)")
+        return event
     }
 }
 

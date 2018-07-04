@@ -38,95 +38,19 @@ public struct LogEvent {
     }
 }
 
-// XXX documentation
-public protocol LogAppender {
-    func append(_ event: LogEvent)
-    func start() throws
-    func stop() throws
+
+/// The logger protocol. It's simply a consumer of a LogEvent.
+/// Loggers are considered immutable.
+public protocol Logger {
+    func log(_ event: LogEvent)
 }
 
-// Default implementations for some of the LogAppender methods
-extension LogAppender {
-    public func start() throws {
-        // Do nothing
-    }
+//XXX /// An object that allows adding events ("log messages") to the logging
+//XXX /// system. Typically the main touch point for application code to the
+//XXX /// logging system.
+//XXX /// Every event can be enriched with arbitrary key-value pairs that will
+//XXX /// be reported together with the event (also known as structured logging).
 
-    public func stop() throws {
-        // Do nothing
-    }
-}
-
-/// A convenient base class for implementors of `LogAppender`.
-public class LogAppenderBase {
-
-    var filters: [EventFilter] = []
-
-    public func addFilter(_ filter: EventFilter) {
-        filters.append(filter)
-    }
-
-    /// Called after checking against an event against all filters.
-    /// Should do the actual appending.
-    func doAppend(_ event: LogEvent) {
-    }
-}
-
-extension LogAppenderBase: LogAppender {
-    public func append(_ event: LogEvent) {
-        if filters.allSatisfy({ $0.shouldBeKept(event) }) {
-            doAppend(event)
-        }
-    }
-}
-
-// MARK: Filters
-
-public protocol EventFilter {
-    func shouldBeKept(_ event: LogEvent) -> Bool
-}
-
-/// Filters log events based on their level
-public final class ThresholdFilter {
-    private let thresholdLevel: LogLevel
-
-    public init(thresholdLevel: LogLevel) {
-        self.thresholdLevel = thresholdLevel
-    }
-}
-
-extension ThresholdFilter: EventFilter {
-    public func shouldBeKept(_ event: LogEvent) -> Bool {
-        return event.level.rawValue <= thresholdLevel.rawValue
-    }
-}
-
-/// An object that allows adding events ("log messages") to the logging
-/// system. Typically the main touch point for application code to the
-/// logging system.
-/// Every event can be enriched with arbitrary key-value pairs that will
-/// be reported together with the event (also known as structured logging).
-public final class Logger: LogAppenderBase {
-
-    private var appenders: [LogAppender] = []
-
-    init(appenders: [LogAppender]) {
-        self.appenders = appenders
-    }
-
-    init(parent: Logger) {
-        self.appenders = [parent]
-    }
-
-    public func addAppender(_ appender: LogAppender) {
-        appenders.append(appender)
-    }
-
-    override func doAppend(_ event: LogEvent) {
-        for appender in appenders {
-            appender.append(event)
-        }
-    }
-}
 
 // MARK: Logging functions
 extension Logger {
@@ -156,31 +80,32 @@ extension Logger {
                 level: level,
                 shortMessage: msg,
                 fields: fields)
-        append(event)
+        log(event)
     }
 }
 
-// MARK: Helpers
+// MARK: Default implementation of a logger
 
-#if !swift(>=4.2)
-extension Sequence {
-    func allSatisfy(_ predicate: (Element) -> Bool) -> Bool {
-        for element in self {
-            guard predicate(element) else {
-                return false
-            }
-        }
-        return true
+final class DefaultLogger {
+    private let consumer: (LogEvent) -> Void
+
+    init(consumer: @escaping (LogEvent) -> Void) {
+        self.consumer = consumer
     }
 }
-#endif
-
+extension DefaultLogger: Logger {
+    func log(_ event: LogEvent) {
+        consumer(event)
+    }
+}
 
 // MARK: Obtaining loggers
-
-// The root logger
-let rootLogger = Logger(appenders: [PrintAppender()])
+var consumer: (LogEvent) -> () = { _ = PrintAppender().process($0) }
 
 public func getLogger() -> Logger {
-    return Logger(parent: rootLogger)
+    return DefaultLogger(consumer: consumer)
+}
+
+public func configureLogging<A>(pipeline: Pipeline<LogEvent, A>) {
+    consumer = { _ = pipeline.process($0) }
 }

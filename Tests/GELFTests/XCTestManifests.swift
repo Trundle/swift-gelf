@@ -6,6 +6,8 @@ public func allTests() -> [XCTestCaseEntry] {
         testCase(GELFTests.allTests),
         testCase(ThresholdFilterTests.allTests),
         testCase(LoggerTests.allTests),
+        testCase(PipelineTests.allTests),
+        testCase(StagesTests.allTests),
     ]
 }
 #endif

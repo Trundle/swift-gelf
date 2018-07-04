@@ -180,7 +180,7 @@ private class ReconnectInitiator: ChannelInboundHandler {
 // MARK: GelfAppender
 
 /// Appends messages to a GELF server
-public final class GelfAppender: LogAppenderBase {
+public final class GelfAppender {
     // Buffer where log events are stored in case the appender is not connected
     private var buffer: CircularBuffer<LogEvent> = CircularBuffer(initialRingCapacity: 100)
     private let facility: String
@@ -214,28 +214,6 @@ public final class GelfAppender: LogAppenderBase {
         self.reconnectDelay = reconnectDelay
         self.maxBufferSize = maxBufferSize
         self.maxInFlight = maxInFlight
-    }
-
-    override func doAppend(_ event: LogEvent) {
-        if let channel = self.channel {
-            guard inFlight.add(1) < self.maxInFlight else {
-                _ = inFlight.sub(1)
-                print("[WARN] GelfAppender: Too many messages in flight, dropping", event)
-                return
-            }
-            let future = channel.writeAndFlush(event)
-            future.whenFailure { _ in self.append(event) }
-            future.whenComplete { _ = self.inFlight.sub(1) }
-        } else {
-            // We are disconnected currently
-            loop.execute {
-                guard self.buffer.count < self.maxBufferSize else {
-                    print("[WARN] GelfAppender: Log buffer over capacity while disconnected, dropping", event)
-                    return
-                }
-                self.buffer.append(event)
-            }
-        }
     }
 
     public func start() throws {
@@ -284,7 +262,32 @@ public final class GelfAppender: LogAppenderBase {
     private func sendBufferedEvents() {
         assert(loop.inEventLoop)
         while case .some(_) = channel, !buffer.isEmpty {
-            append(buffer.removeFirst())
+            _ = process(buffer.removeFirst())
         }
+    }
+}
+
+extension GelfAppender: Stage {
+    public func process(_ event: LogEvent) -> LogEvent? {
+        if let channel = self.channel {
+            guard inFlight.add(1) < self.maxInFlight else {
+                _ = inFlight.sub(1)
+                print("[WARN] GelfAppender: Too many messages in flight, dropping", event)
+                return .none
+            }
+            let future = channel.writeAndFlush(event)
+            future.whenFailure { _ in _ = self.process(event) }
+            future.whenComplete { _ = self.inFlight.sub(1) }
+        } else {
+            // We are disconnected currently
+            loop.execute {
+                guard self.buffer.count < self.maxBufferSize else {
+                    print("[WARN] GelfAppender: Log buffer over capacity while disconnected, dropping", event)
+                    return
+                }
+                self.buffer.append(event)
+            }
+        }
+        return event
     }
 }
