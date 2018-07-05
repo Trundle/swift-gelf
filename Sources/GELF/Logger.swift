@@ -45,13 +45,6 @@ public protocol Logger {
     func log(_ event: LogEvent)
 }
 
-//XXX /// An object that allows adding events ("log messages") to the logging
-//XXX /// system. Typically the main touch point for application code to the
-//XXX /// logging system.
-//XXX /// Every event can be enriched with arbitrary key-value pairs that will
-//XXX /// be reported together with the event (also known as structured logging).
-
-
 // MARK: Logging functions
 extension Logger {
     public func debug(_ msg: String, _ fields: [String: Any] = [:]) {
