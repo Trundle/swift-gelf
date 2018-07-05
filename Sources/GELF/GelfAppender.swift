@@ -273,7 +273,7 @@ extension GelfAppender: Stage {
             guard inFlight.add(1) < self.maxInFlight else {
                 _ = inFlight.sub(1)
                 print("[WARN] GelfAppender: Too many messages in flight, dropping", event)
-                return .none
+                return event
             }
             let future = channel.writeAndFlush(event)
             future.whenFailure { _ in _ = self.process(event) }
