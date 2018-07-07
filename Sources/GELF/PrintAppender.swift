@@ -14,12 +14,20 @@
 
 import Foundation
 
+#if os(Linux)
+import Glibc
+#else
+import Darwin.C
+#endif
+
 /// A log appender that writes to stdout
 public class PrintAppender {
     let dateFormatter: DateFormatter = DateFormatter()
+    let flushAfterPrint: Bool
 
-    public init() {
-        dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZZZZZ"
+    public init(flush: Bool = true) {
+        self.dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ssZZZZZ"
+        self.flushAfterPrint = flush
     }
 }
 
@@ -28,6 +36,9 @@ extension PrintAppender: Stage {
         let when = dateFormatter.string(from: event.timestamp)
         let fields = event.fields.map { (key, value) in "\(key)=\(value)" }.joined(separator: " ")
         print("\(when) \(event.level) \(event.shortMessage) \(fields)")
+        if flushAfterPrint {
+            fflush(stdout)
+        }
         return event
     }
 }
