@@ -195,9 +195,10 @@ public final class GelfAppender {
     private var bootstrap: ClientBootstrap!
     // Invariant: present value means there is an active connection to the GELF server
     private var channel: Channel?
-    private var started: Bool = false
+    private var started: Atomic<Bool> = Atomic(value: false)
     private var inFlight: Atomic<Int> = Atomic(value: 0)
     private let maxInFlight: Int
+    private var lastMessageSent: EventLoopPromise<Void>!
 
     public init(group: EventLoopGroup, senderHost: String, facility: String,
                 host: String, port: Int = 12201,
@@ -229,19 +230,28 @@ public final class GelfAppender {
                 }
         channel = try bootstrap.connect(host: host, port: port).wait()
         loop = channel!.eventLoop
-        started = true
+        lastMessageSent = loop.newPromise()
+        started.store(true)
     }
 
+    /// Stops the appender. Waits until all pending messages are sent and then
+    /// closes the connection to the GELF server. In case there is no active
+    /// connection to the GELF server or the connection is lost, the pending
+    /// messages will be discarded.
     public func stop() throws {
+        started.store(false)
         if let channel = self.channel {
             self.channel = .none
-            try channel.close().wait()
+            if inFlight.load() <= 0 {
+                try channel.close().wait()
+            } else {
+                try self.lastMessageSent.futureResult.then { channel.close() }.wait()
+            }
         }
-        started = false
     }
 
     private func initiateReconnect() {
-        guard started else {
+        guard started.load() else {
             return
         }
         channel = .none
@@ -271,13 +281,13 @@ extension GelfAppender: Stage {
     public func process(_ event: LogEvent) -> LogEvent? {
         if let channel = self.channel {
             guard inFlight.add(1) < self.maxInFlight else {
-                _ = inFlight.sub(1)
+                self.handleComplete()
                 print("[WARN] GelfAppender: Too many messages in flight, dropping", event)
                 return event
             }
             let future = channel.writeAndFlush(event)
             future.whenFailure { _ in _ = self.process(event) }
-            future.whenComplete { _ = self.inFlight.sub(1) }
+            future.whenComplete(self.handleComplete)
         } else {
             // We are disconnected currently
             loop.execute {
@@ -289,5 +299,12 @@ extension GelfAppender: Stage {
             }
         }
         return event
+    }
+
+    private func handleComplete() {
+        // Note that the previous value is returned, hence the comparison against 1
+        if self.inFlight.sub(1) <= 1 && !self.started.load() {
+            self.lastMessageSent.succeed(result: ())
+        }
     }
 }
